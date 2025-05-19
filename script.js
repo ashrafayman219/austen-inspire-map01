@@ -5389,7 +5389,10 @@ optionsContainer.addEventListener('click', async (e) => {
     }
 
     updateSelectedDisplay();
-    updateDropdownOptions(); // Add this line
+    updateDropdownOptions();
+    
+    // Enable the load button when changes are made
+    document.getElementById('loadRegionsButton').disabled = false;
 });
 
         searchInput.addEventListener('input', (e) => {
@@ -5425,7 +5428,7 @@ function updateDropdownOptions() {
         option.innerHTML = `
             <span>${region}</span>
             <div class="option-indicators">
-                ${isSelected || isLoaded ? '<span class="indicator">✓</span>' : ''}
+                ${isSelected ? '<span class="indicator">✓</span>' : ''}
             </div>
         `;
         
@@ -5478,7 +5481,6 @@ function updateSelectedDisplay() {
             <span class="remove-btn" data-region="${region}">&times;</span>
         `;
         
-        // Modified click handler to only update UI
         tag.querySelector('.remove-btn').addEventListener('click', (e) => {
             e.stopPropagation();
             const regionToRemove = e.target.getAttribute('data-region');
@@ -5490,6 +5492,9 @@ function updateSelectedDisplay() {
             
             updateSelectedDisplay();
             updateDropdownOptions();
+            
+            // Enable the load button to apply changes
+            loadButton.disabled = false;
         });
 
         selectedRegionsContainer.appendChild(tag);
@@ -5694,38 +5699,46 @@ async function loadRegionLayers(regionsToLoad = null) {
 
 // Add the load button click handler
 document.getElementById('loadRegionsButton').addEventListener('click', async () => {
-  // debugLayers('Before any changes');
-  const dropdown = document.getElementById('regionDropdown');
-  const regionsToUnload = new Set(
-      Array.from(loadedRegions).filter(region => !selectedRegions.has(region))
-  );
+    const dropdown = document.getElementById('regionDropdown');
+    
+    // Identify regions to unload (those that were loaded but are no longer selected)
+    const regionsToUnload = new Set(
+        Array.from(loadedRegions).filter(region => !selectedRegions.has(region))
+    );
 
-  const regionsToLoad = new Set(
-      Array.from(selectedRegions).filter(region => !loadedRegions.has(region))
-  );
+    // Identify new regions to load
+    const regionsToLoad = new Set(
+        Array.from(selectedRegions).filter(region => !loadedRegions.has(region))
+    );
 
-  if (regionsToLoad.size > 0 || regionsToUnload.size > 0) {
-      try {
-          const preloader = document.getElementById("preloader");
-          if (preloader) preloader.style.display = "flex";
-          
-          // Close the dropdown after loading
-          dropdown.classList.remove('active');
-          
-          await loadRegionLayers(selectedRegions);
-          
-          updateSelectedDisplay();
-          updateDropdownOptions();
-          
-          await zoomToVisibleLayers();
+    if (regionsToLoad.size > 0 || regionsToUnload.size > 0) {
+        try {
+            const preloader = document.getElementById("preloader");
+            if (preloader) preloader.style.display = "flex";
+            
+            dropdown.classList.remove('active');
+            
+            // Clear existing layers for unloaded regions
+            if (regionsToUnload.size > 0) {
+                regionsToUnload.forEach(region => {
+                    loadedRegions.delete(region);
+                });
+            }
 
+            // Load new regions
+            await loadRegionLayers(selectedRegions);
+            
+            updateSelectedDisplay();
+            updateDropdownOptions();
+            
+            await zoomToVisibleLayers();
 
-      } catch (error) {
-          console.error("Error managing regions:", error);
-      } finally {
-          if (preloader) preloader.style.display = "none";
-      }
-  }
+        } catch (error) {
+            console.error("Error managing regions:", error);
+        } finally {
+            if (preloader) preloader.style.display = "none";
+        }
+    }
 });
 
 
@@ -11831,6 +11844,47 @@ async function addWidgets() {
           },
         ],
       },
+      "dma-inflow": {
+        field: "current_inflow",
+        categories: [
+            {
+                value: "No Data or Zero Inflow",
+                label: "No Data or Zero Inflow",
+                color: [128, 128, 128, 0.6], // Dark Grey
+                condition: value => value === null || value === undefined || value <= 0
+            },
+            {
+                value: "1-500",
+                label: "1-500 m³/day",
+                color: [173, 216, 230, 0.6], // Light Blue
+                condition: value => value > 0 && value <= 500
+            },
+            {
+                value: "501-1000",
+                label: "501-1000 m³/day",
+                color: [0, 0, 255, 0.6], // Blue
+                condition: value => value > 500 && value <= 1000
+            },
+            {
+                value: "1001-2000",
+                label: "1001-2000 m³/day",
+                color: [0, 128, 128, 0.6], // Teal
+                condition: value => value > 1000 && value <= 2000
+            },
+            {
+                value: "2001-3000",
+                label: "2001-3000 m³/day",
+                color: [0, 128, 0, 0.6], // Green
+                condition: value => value > 2000 && value <= 3000
+            },
+            {
+                value: "3001 above",
+                label: "3001+ m³/day",
+                color: [255, 255, 0, 0.6], // Yellow
+                condition: value => value > 3000
+            }
+        ]
+      }
     };
 
     // 2. Add all these utility functions together
@@ -11864,6 +11918,7 @@ async function addWidgets() {
       if (layerTitle === "DMZ Boundaries") {
         const themes = [
           { value: "nrw-percentage", text: "DMA NRW Percentage" },
+          { value: "dma-inflow", text: "DMA Inflow" },  // Add the new theme
           { value: "nrw-status", text: "DMA NRW Status" },
           { value: "operational-status", text: "DMA Operational Status" },
         ];
@@ -11893,6 +11948,38 @@ async function addWidgets() {
       // Create renderer based on theme configuration
       const createRenderer = (themeKey, layerType) => {
         const themeConfig = THEME_CONFIG[themeKey];
+
+        if (themeKey === "dma-inflow") {
+          return {
+            type: "unique-value",
+            field: themeConfig.field,
+            uniqueValueInfos: themeConfig.categories.map(category => ({
+                value: category.value,
+                symbol: {
+                    type: "simple-fill",
+                    color: category.color,
+                    outline: { color: [128, 128, 128, 0.8], width: 0.5 }
+                },
+                label: category.label
+            })),
+            valueExpression: `
+              var inflow = $feature.current_inflow;
+              if (inflow == null || inflow <= 0) {
+                  return 'No Data or Zero Inflow';
+              } else if (inflow <= 500) {
+                  return '1-500';
+              } else if (inflow <= 1000) {
+                  return '501-1000';
+              } else if (inflow <= 2000) {
+                  return '1001-2000';
+              } else if (inflow <= 3000) {
+                  return '2001-3000';
+              } else {
+                  return '3001 above';
+              }
+            `
+          };
+        }
 
         if (layerType === "Data Loggers" && themeKey === "hardware-alarm") {
           // Special handling for Data Loggers hardware alarm
@@ -12024,7 +12111,38 @@ async function addWidgets() {
                     // Apply appropriate labels based on theme
                     if (theme === "nrw-percentage") {
                       sublayer.labelingInfo = [labelClassDMZBoundaries];
-                    } else {
+                    } else if (theme === "dma-inflow") {
+                        sublayer.labelingInfo = [{
+                            symbol: {
+                                type: "text",
+                                color: "black",
+                                haloColor: "white",
+                                haloSize: 2,
+                                font: {
+                                    family: "Noto Sans",
+                                    weight: "bold",
+                                    size: 8
+                                }
+                            },
+                            labelPlacement: "always-horizontal",
+                            labelExpressionInfo: {
+                                expression: `
+                                    var siteName = $feature.sitename;
+                                    var inflow = $feature.current_inflow;
+                                    
+                                    // Format Inflow Value
+                                    var inflowText = When(
+                                        IsEmpty(inflow) || inflow == null,
+                                        "No Data",
+                                        Text(Round(inflow, 0), "#,##0") + " m³/day"
+                                    );
+                                    
+                                    // Combine lines
+                                    return siteName + TextFormatting.NewLine + inflowText;
+                                `
+                            }
+                        }];
+                      } else {
                       sublayer.labelingInfo = [
                         labelClassDMZBoundariesNamesOnly,
                       ];
@@ -12306,6 +12424,31 @@ async function addWidgets() {
                 const nrwValue = feature.attributes[themeConfig.field];
                 const category = getNRWCategory(nrwValue);
                 categoryCounts[category] = (categoryCounts[category] || 0) + 1;
+              });
+            });
+        } else if (selectedTheme === "dma-inflow") {
+            // Special handling for DMA Inflow
+            return sublayer.queryFeatures(query)
+              .then(result => {
+              result.features.forEach(feature => {
+                  const inflowValue = feature.attributes[themeConfig.field];
+                  let category;
+                  
+                  if (inflowValue === null || inflowValue <= 0) {
+                      category = "No Data or Zero Inflow";
+                  } else if (inflowValue <= 500) {
+                      category = "1-500";
+                  } else if (inflowValue <= 1000) {
+                      category = "501-1000";
+                  } else if (inflowValue <= 2000) {
+                      category = "1001-2000";
+                  } else if (inflowValue <= 3000) {
+                      category = "2001-3000";
+                  } else {
+                      category = "3001 above";
+                  }
+                  
+                  categoryCounts[category] = (categoryCounts[category] || 0) + 1;
               });
             });
         } else {
