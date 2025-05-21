@@ -147,6 +147,10 @@ async function updateLegendCount(layer, layerTitle, currentCount) {
     try {
         if (layer.visible) {
             let newCount = 0;
+
+            // Add a loading indicator while counting
+            countElement.textContent = "Counting...";
+
             if (layerTitle === "Water Mains") {
                 const query = {
                     where: "1=1",
@@ -200,6 +204,7 @@ async function updateLegendCount(layer, layerTitle, currentCount) {
         }
     } catch (error) {
         console.error("Error updating legend count:", error);
+        countElement.textContent = "#";
     }
 }
 // Helper function to find parent layer
@@ -242,14 +247,16 @@ async function calculateTotalCount(parentLayer, layerTitle) {
     await processLayer(parentLayer);
     return totalCount;
 }
+// Modify the visibility watchers to use debounce
 function setupSubtypeGroupWatcher(subtypegrouplayer, layerTitle) {
     subtypegrouplayer.loadAll().then(() => {
         if (subtypegrouplayer.sublayers) {
             subtypegrouplayer.sublayers.forEach((sublayer) => {
-                let sublayerCount = 0;
-                sublayer.watch("visible", async () => {
-                    await updateLegendCount(sublayer, layerTitle, sublayerCount);
-                });
+                const debouncedUpdate = debounce(async () => {
+                    await updateLegendCount(sublayer, layerTitle, 0);
+                }, 300);
+                
+                sublayer.watch("visible", debouncedUpdate);
             });
         }
     });
@@ -295,10 +302,27 @@ function resetLegendCounts() {
         }
     });
 }
+// Improve the setup of watchers
 function setupLegendCountWatchers() {
     displayMap.layers.forEach((layer) => {
         if (layer.type === "group") {
-            layer.loadAll().then(() => {
+            layer.when(() => {
+                // Watch the main group layer visibility
+                layer.watch("visible", async (visible) => {
+                    if (!visible) {
+                        // Reset counts when group is hidden
+                        const matchingLegendItem = legendData.find(item => item.feature === layer.title);
+                        if (matchingLegendItem) {
+                            const countElement = document.getElementById(
+                                matchingLegendItem.feature.replace(/\s+/g, "") + "Count"
+                            );
+                            if (countElement) {
+                                countElement.textContent = "#";
+                            }
+                        }
+                    }
+                });
+
                 if (layer.layers) {
                     layer.layers.forEach((subtypegrouplayer) => {
                         if (subtypegrouplayer.type === "subtype-group") {
@@ -316,8 +340,18 @@ function setupLegendCountWatchers() {
         }
     });
 }
-
-
+// Add a debounce function to prevent too frequent updates
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
 
 
 const labelClassDMZBoundaries = {
@@ -5469,17 +5503,24 @@ function updateSelectedDisplay() {
     // Clear existing tags
     selectedRegionsContainer.innerHTML = '';
 
-    // Add new tags
+    // Add new tags - simplified version with just region name and remove button
     selectedRegions.forEach(region => {
         const tag = document.createElement('div');
         tag.className = 'region-tag';
-        const isLoaded = loadedRegions.has(region);
+        // const isLoaded = loadedRegions.has(region);
         
+        // tag.innerHTML = `
+        //     ${region}
+        //     ${isLoaded ? '<span class="loaded-indicator">✓</span>' : ''}
+        //     <span class="remove-btn" data-region="${region}">&times;</span>
+        // `;
+
+        // Simplified tag HTML - only region name and remove button
         tag.innerHTML = `
             ${region}
-            ${isLoaded ? '<span class="loaded-indicator">✓</span>' : ''}
             <span class="remove-btn" data-region="${region}">&times;</span>
         `;
+
         
         tag.querySelector('.remove-btn').addEventListener('click', (e) => {
             e.stopPropagation();
@@ -14349,8 +14390,23 @@ async function addWidgets() {
     //   }
     // });
 
+    // Add this after creating the legend
+    function initializeLegend() {
+        legendData.forEach(item => {
+            const countElement = document.getElementById(
+                item.feature.replace(/\s+/g, "") + "Count"
+            );
+            if (countElement) {
+                countElement.textContent = "#";
+            }
+        });
+    }
+
+
+
     // Call the function to create the legend initially
     createLegend(legendData);
+    initializeLegend();
 
     Promise.all([
       view.when(),
